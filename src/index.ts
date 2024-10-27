@@ -121,5 +121,53 @@ export class FetchToAxios {
     }
   }
 
-  // 나머지 get, post, put, delete 메서드는 그대로 유지됩니다.
+  async get<T>(
+    url: string,
+    options?: FetchOptions
+  ): Promise<AxiosLikeResponse<T>> {
+    return this.request<T>(url, { ...options, method: "GET" });
+  }
+
+  async post<T>(
+    url: string,
+    data?: any,
+    options?: FetchOptions
+  ): Promise<AxiosLikeResponse<T>> {
+    const headers = {
+      "Content-Type": "application/json",
+      ...(options?.headers || {}),
+    };
+
+    return this.request<T>(url, {
+      ...options,
+      method: "POST",
+      body: JSON.stringify(data),
+      headers,
+    });
+  }
+
+  async put<T>(
+    url: string,
+    data?: any,
+    options?: FetchOptions
+  ): Promise<AxiosLikeResponse<T>> {
+    const headers = {
+      "Content-Type": "application/json",
+      ...(options?.headers || {}),
+    };
+
+    return this.request<T>(url, {
+      ...options,
+      method: "PUT",
+      body: JSON.stringify(data),
+      headers,
+    });
+  }
+
+  async delete<T>(
+    url: string,
+    options?: FetchOptions
+  ): Promise<AxiosLikeResponse<T>> {
+    return this.request<T>(url, { ...options, method: "DELETE" });
+  }
 }
