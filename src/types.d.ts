@@ -4,7 +4,9 @@ export interface FetchOptions extends Omit<RequestInit, "cache"> {
   timeout?: number;
   useCache?: boolean; // cache를 useCache로 이름 변경
   cacheTimeout?: number;
+  headers?: Record<string, string>;
 }
+
 export interface AxiosLikeResponse<T = any> {
   data: T;
   status: number;
