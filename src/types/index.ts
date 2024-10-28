@@ -42,6 +42,7 @@ interface ReactConfig extends RequestOptions {
 // 통합 Config 타입
 type Config = (NextConfig | ReactConfig) & {
   retryConfig?: RetryConfig;
+  credentials?: "same-origin" | "include" | "omit";
 };
 
 // API 응답
