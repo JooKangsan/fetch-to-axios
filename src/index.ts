@@ -5,15 +5,18 @@ interface Config {
   body?: string;
 }
 
-const createFetch = (baseConfig: Config = {}) => {
-  const fetchWithConfig = async (url: string, options: Config = {}) => {
+const createFetch = (baseConfig: Config = { headers: {} }) => {
+  const fetchWithConfig = async (
+    url: string,
+    options: Config = { headers: {} }
+  ) => {
     const config = {
       ...baseConfig,
       ...options,
       headers: {
         ...baseConfig.headers,
-        ...options.headers
-      }
+        ...options.headers,
+      },
     };
 
     const response = await fetch(url, config);
@@ -25,3 +28,4 @@ const createFetch = (baseConfig: Config = {}) => {
 
   return fetchWithConfig;
 };
+
