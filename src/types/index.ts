@@ -17,7 +17,7 @@ interface BaseConfig {
 interface RequestOptions extends BaseConfig {
   url?: string;
   method?: HTTPMethod;
-  params?: Record<string, string>;
+  params?: Record<string, any>;
   body?: any;
   signal?: AbortSignal;
 }
