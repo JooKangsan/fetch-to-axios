@@ -1,8 +1,8 @@
 // src/core/createClient.ts
-import { isNext } from "../utils/environment";
-import { retry } from "../utils/retry";
-import type { Config, Client, APIResponse, Interceptor } from "../types";
-import { APIError } from "../types";
+import { isNext } from "./utils/environment";
+import { retry } from "./utils/retry";
+import type { Config, Client, APIResponse, Interceptor } from "./types";
+import { APIError } from "./types";
 
 export const createClient = (baseConfig: Config = {}): Client => {
   const requestInterceptors: Interceptor<Config>[] = [];

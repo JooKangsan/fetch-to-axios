@@ -1,5 +1,5 @@
 // src/__tests__/client.test.ts
-import { createClient } from "../core/createClient";
+import { createClient } from "../index";
 import { APIError, APIResponse } from "../types";
 
 describe("HTTP Client", () => {
