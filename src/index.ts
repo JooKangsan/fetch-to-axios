@@ -9,8 +9,22 @@ export const createClient = (baseConfig: Config = {}): Client => {
   const responseInterceptors: Interceptor<APIResponse>[] = [];
 
   const createURL = (path: string, params?: Record<string, string>): string => {
-    const url = new URL(path, baseConfig.baseURL);
+    // baseURL이 없는 경우 path를 그대로 사용
+    if (!baseConfig.baseURL) {
+      return path;
+    }
 
+    // baseURL의 끝 슬래시와 path의 시작 슬래시 처리
+    const baseUrl = baseConfig.baseURL.endsWith("/")
+      ? baseConfig.baseURL.slice(0, -1)
+      : baseConfig.baseURL;
+
+    const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+
+    // URL 생성
+    const url = new URL(normalizedPath, baseUrl);
+
+    // 쿼리 파라미터 추가
     if (params) {
       Object.entries(params).forEach(([key, value]) => {
         if (value != null) {
@@ -21,6 +35,7 @@ export const createClient = (baseConfig: Config = {}): Client => {
 
     return url.toString();
   };
+
   const createRequestInit = (config: Config = {}): RequestInit => {
     const init: RequestInit = {
       headers: {
@@ -30,6 +45,7 @@ export const createClient = (baseConfig: Config = {}): Client => {
       },
       method: config.method,
       signal: config.signal,
+      credentials: config.credentials,
     };
 
     if (config.body) {
@@ -40,7 +56,6 @@ export const createClient = (baseConfig: Config = {}): Client => {
       return {
         ...init,
         cache: config.cache as RequestCache,
-        // 타입 단언으로 next 속성 처리
       } as RequestInit & {
         next?: { revalidate?: number | false; tags?: string[] };
       };
