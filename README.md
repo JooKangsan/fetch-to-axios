@@ -1,3 +1,5 @@
+# (주의!)위 라이브러리는 정식판이 아닌 테스트 판입니다. 사용방법을 자세하게 달아놓았지만 부족한 내용이 많습니다.
+
 # @rivermountain/fetch-to-axios
 
 # Korean
@@ -167,6 +169,8 @@ interface Config {
 - 브라우저 환경에서 CORS 설정이 필요한 경우 적절한 credentials 옵션을 설정해야 합니다
 
 # English
+
+# (Caution!)This library is a test version, not the official release. Although detailed usage instructions are provided, there is still a lot of missing information.
 
 A lightweight HTTP client library based on Fetch API with an Axios-like interface. Built with TypeScript for robust type safety and minimal bundle size.
 
