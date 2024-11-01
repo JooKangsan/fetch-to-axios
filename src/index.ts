@@ -1,187 +1,167 @@
-import {
-  FetchOptions,
-  AxiosLikeResponse,
-  AxiosLikeError,
-  Interceptors,
-} from "./types";
-import { createURLWithParams } from "./utils";
-import { InterceptorManager } from "./interceptor";
-import { Cache } from "./cache";
+// src/core/createClient.ts
+import { isNext } from "./utils/environment";
+import { retry } from "./utils/retry";
+import type { Config, Client, APIResponse, Interceptor } from "./types";
+import { APIError } from "./types";
 
-export class FetchToAxios {
-  private baseURL: string;
-  private defaultOptions: FetchOptions;
-  private cache: Cache;
-  private requestInterceptor: InterceptorManager;
-  private responseInterceptor: InterceptorManager;
-  public interceptors: Interceptors;
+export const createClient = (baseConfig: Config = {}): Client => {
+  const requestInterceptors: Interceptor<Config>[] = [];
+  const responseInterceptors: Interceptor<APIResponse>[] = [];
 
-  constructor(options: FetchOptions = {}) {
-    this.baseURL = options.baseURL || "";
-    this.defaultOptions = options;
-    this.cache = new Cache();
+  const createURL = (path: string, params?: Record<string, string>): string => {
+    if (!baseConfig.baseURL) {
+      return path;
+    }
 
-    this.requestInterceptor = new InterceptorManager();
-    this.responseInterceptor = new InterceptorManager();
+    // baseURL의 끝 슬래시 제거
+    const baseUrl = baseConfig.baseURL.replace(/\/+$/, "");
 
-    this.interceptors = {
-      request: {
-        use: (fn) => this.requestInterceptor.use(fn),
-        eject: (id) => this.requestInterceptor.eject(id),
+    // path의 시작 슬래시 정규화 (여러 개의 슬래시를 하나로)
+    const normalizedPath = path.replace(/^\/+/, "/");
+
+    // URL 결합
+    const fullUrl = `${baseUrl}${normalizedPath}`;
+
+    // 쿼리 파라미터 처리
+    if (!params) {
+      return fullUrl;
+    }
+
+    const url = new URL(fullUrl);
+    Object.entries(params).forEach(([key, value]) => {
+      if (value != null) {
+        url.searchParams.append(key, value);
+      }
+    });
+
+    return url.toString();
+  };
+  const createRequestInit = (config: Config = {}): RequestInit => {
+    const init: RequestInit = {
+      headers: {
+        "Content-Type": "application/json",
+        ...baseConfig.headers,
+        ...config.headers,
       },
-      response: {
-        use: (fn) => this.responseInterceptor.use(fn),
-        eject: (id) => this.responseInterceptor.eject(id),
-      },
+      method: config.method,
     };
-  }
 
-  private createError(
-    message: string,
-    config: FetchOptions,
-    response?: Response
-  ): AxiosLikeError {
-    const error = new Error(message) as AxiosLikeError;
-    error.config = config;
-    if (response) {
-      error.status = response.status;
-      error.response = {
-        data: null,
-        status: response.status,
-        statusText: response.statusText,
-        headers: {},
-        config,
+    if (config.body) {
+      init.body = JSON.stringify(config.body);
+    }
+
+    // signal은 테스트에서 검증하지 않는 속성이므로 조건부로 추가
+    if (config.signal) {
+      init.signal = config.signal;
+    }
+
+    // credentials도 조건부로 추가
+    if (config.credentials) {
+      init.credentials = config.credentials;
+    }
+
+    if (isNext() && config.cache) {
+      return {
+        ...init,
+        cache: config.cache as RequestCache,
+      } as RequestInit & {
+        next?: { revalidate?: number | false; tags?: string[] };
       };
     }
-    return error;
-  }
 
-  private async request<T>(
-    url: string,
-    options: FetchOptions = {}
-  ): Promise<AxiosLikeResponse<T>> {
-    const fullURL = this.baseURL + url;
-    const finalURL = createURLWithParams(fullURL, options.params);
-
-    // Cache check (useCache로 변경)
-    if (options.useCache && options.method === "GET") {
-      const cachedResponse = this.cache.get(finalURL);
-      if (cachedResponse) {
-        return cachedResponse;
-      }
+    return init;
+  };
+  const handleResponse = async <T>(response: Response): Promise<T> => {
+    if (!response.ok) {
+      const data = await response.json().catch(() => null);
+      throw new APIError(
+        response.status,
+        data,
+        response.status === 429 ? "RATE_LIMIT" : "API_ERROR"
+      );
     }
+
+    const data = await response.json();
+
+    // 응답 인터셉터 실행
+    const apiResponse: APIResponse = {
+      data,
+      status: response.status,
+      headers: response.headers,
+    };
+
+    const result = await responseInterceptors.reduce(
+      async (promise, interceptor) => {
+        const value = await promise;
+        return interceptor.onFulfilled ? interceptor.onFulfilled(value) : value;
+      },
+      Promise.resolve(apiResponse)
+    );
+
+    return result.data as T;
+  };
+
+  const request = async <T>(config: Config): Promise<T> => {
+    // 요청 인터셉터 실행
+    const finalConfig = await requestInterceptors.reduce(
+      async (promise, interceptor) => {
+        const conf = await promise;
+        return interceptor.onFulfilled ? interceptor.onFulfilled(conf) : conf;
+      },
+      Promise.resolve(config)
+    );
 
     const controller = new AbortController();
-    const timeout = options.timeout || this.defaultOptions.timeout;
-
-    let timeoutId: NodeJS.Timeout | undefined;
-    if (timeout) {
-      timeoutId = setTimeout(() => controller.abort(), timeout);
-    }
+    const timeoutId =
+      finalConfig.timeout &&
+      setTimeout(() => controller.abort(), finalConfig.timeout);
 
     try {
-      // RequestInit 타입과 호환되도록 options 가공
-      const fetchOptions: RequestInit = {
-        ...this.defaultOptions,
-        method: options.method,
-        headers: options.headers,
-        body: options.body,
+      const url = createURL(config.url!, config.params);
+      const init = createRequestInit({
+        ...finalConfig,
         signal: controller.signal,
-      };
-
-      let modifiedOptions = await this.requestInterceptor.execute(fetchOptions);
-
-      const response = await fetch(finalURL, modifiedOptions);
-
-      if (!response.ok) {
-        throw this.createError(
-          `Request failed with status ${response.status}`,
-          options,
-          response
-        );
-      }
-
-      const data = await response.json();
-      const headers: Record<string, string> = {};
-      response.headers.forEach((value, key) => {
-        headers[key] = value;
       });
 
-      let result: AxiosLikeResponse<T> = {
-        data,
-        status: response.status,
-        statusText: response.statusText,
-        headers,
-        config: options,
-      };
+      const execute = () =>
+        fetch(url, init).then((res) => handleResponse<T>(res));
 
-      result = await this.responseInterceptor.execute(result);
-
-      // Cache the response if needed (useCache로 변경)
-      if (options.useCache && options.method === "GET") {
-        this.cache.set(finalURL, result, options.cacheTimeout);
+      if (finalConfig.retryConfig) {
+        const { maxRetries, retryDelay, retryCondition } =
+          finalConfig.retryConfig;
+        return retry(execute, maxRetries, retryDelay, retryCondition);
       }
 
-      return result;
-    } catch (error) {
-      if (error instanceof Error) {
-        throw this.createError(error.message, options);
-      }
-      throw error;
+      return execute();
     } finally {
       if (timeoutId) clearTimeout(timeoutId);
     }
-  }
+  };
 
-  async get<T>(
-    url: string,
-    options: FetchOptions = {}
-  ): Promise<AxiosLikeResponse<T>> {
-    return this.request<T>(url, { ...options, method: "GET" });
-  }
+  return {
+    interceptors: {
+      request: requestInterceptors,
+      response: responseInterceptors,
+    },
 
-  async post<T>(
-    url: string,
-    data?: any,
-    options: FetchOptions = {}
-  ): Promise<AxiosLikeResponse<T>> {
-    return this.request<T>(url, {
-      ...options,
-      method: "POST",
-      body: JSON.stringify(data),
-      headers: {
-        "Content-Type": "application/json",
-        ...options.headers,
-      },
-    });
-  }
+    async get<T>(url: string, config: Config = {}) {
+      return request<T>({ ...config, url, method: "GET" });
+    },
 
-  async put<T>(
-    url: string,
-    data?: any,
-    options: FetchOptions = {}
-  ): Promise<AxiosLikeResponse<T>> {
-    return this.request<T>(url, {
-      ...options,
-      method: "PUT",
-      body: JSON.stringify(data),
-      headers: {
-        "Content-Type": "application/json",
-        ...options.headers,
-      },
-    });
-  }
+    async post<T>(url: string, data?: any, config: Config = {}) {
+      return request<T>({ ...config, url, method: "POST", body: data });
+    },
 
-  async delete<T>(
-    url: string,
-    options: FetchOptions = {}
-  ): Promise<AxiosLikeResponse<T>> {
-    return this.request<T>(url, { ...options, method: "DELETE" });
-  }
+    async put<T>(url: string, data?: any, config: Config = {}) {
+      return request<T>({ ...config, url, method: "PUT", body: data });
+    },
 
-  clearCache(): void {
-    this.cache.clear();
-  }
-}
+    async patch<T>(url: string, data?: any, config: Config = {}) {
+      return request<T>({ ...config, url, method: "PATCH", body: data });
+    },
 
-export type { FetchOptions, AxiosLikeResponse, AxiosLikeError };
+    async delete<T>(url: string, config: Config = {}) {
+      return request<T>({ ...config, url, method: "DELETE" });
+    },
+  };
+};
