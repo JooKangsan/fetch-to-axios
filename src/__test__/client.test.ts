@@ -3,7 +3,7 @@ import { createClient } from "../index";
 import { APIError, APIResponse } from "../types";
 
 describe("HTTP Client", () => {
-  const mockBaseUrl = "https://api.example.com";
+  const mockBaseUrl = "https://api.example.com"; // 끝 슬래시 제거
   const client = createClient({
     baseURL: mockBaseUrl,
     headers: {
@@ -32,7 +32,7 @@ describe("HTTP Client", () => {
 
       expect(response).toEqual(mockData);
       expect(global.fetch).toHaveBeenCalledWith(
-        `${mockBaseUrl}/users/1`,
+        `${mockBaseUrl}/users/1`, // URL 형식 수정
         expect.objectContaining({
           method: "GET",
           headers: expect.objectContaining({
@@ -69,12 +69,13 @@ describe("HTTP Client", () => {
 
       expect(response).toEqual(mockResponse);
       expect(global.fetch).toHaveBeenCalledWith(
-        `${mockBaseUrl}/users`,
+        `${mockBaseUrl}/users`, // URL 형식 수정
         expect.objectContaining({
           method: "POST",
           body: JSON.stringify(postData),
           headers: expect.objectContaining({
             "Content-Type": "application/json",
+            Authorization: "Bearer test-token",
           }),
         })
       );

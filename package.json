@@ -1,11 +1,11 @@
 {
   "name": "@rivermountain/fetch-to-axios",
-  "version": "0.0.11",
+  "version": "0.0.13",
   "description": "Advanced fetch API wrapper with Axios-like interface",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "test": "jest",
+      "test": "npm run build && jest",
     "build": "tsc",
     "prepare": "npm run build",
     "prepublishOnly": "npm run build"

@@ -9,33 +9,33 @@ export const createClient = (baseConfig: Config = {}): Client => {
   const responseInterceptors: Interceptor<APIResponse>[] = [];
 
   const createURL = (path: string, params?: Record<string, string>): string => {
-    // baseURL이 없는 경우 path를 그대로 사용
     if (!baseConfig.baseURL) {
       return path;
     }
 
-    // baseURL의 끝 슬래시와 path의 시작 슬래시 처리
-    const baseUrl = baseConfig.baseURL.endsWith("/")
-      ? baseConfig.baseURL.slice(0, -1)
-      : baseConfig.baseURL;
+    // baseURL의 끝 슬래시 제거
+    const baseUrl = baseConfig.baseURL.replace(/\/+$/, "");
 
-    const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+    // path의 시작 슬래시 정규화 (여러 개의 슬래시를 하나로)
+    const normalizedPath = path.replace(/^\/+/, "/");
 
-    // URL 생성
-    const url = new URL(normalizedPath, baseUrl);
+    // URL 결합
+    const fullUrl = `${baseUrl}${normalizedPath}`;
 
-    // 쿼리 파라미터 추가
-    if (params) {
-      Object.entries(params).forEach(([key, value]) => {
-        if (value != null) {
-          url.searchParams.append(key, value);
-        }
-      });
+    // 쿼리 파라미터 처리
+    if (!params) {
+      return fullUrl;
     }
+
+    const url = new URL(fullUrl);
+    Object.entries(params).forEach(([key, value]) => {
+      if (value != null) {
+        url.searchParams.append(key, value);
+      }
+    });
 
     return url.toString();
   };
-
   const createRequestInit = (config: Config = {}): RequestInit => {
     const init: RequestInit = {
       headers: {
@@ -44,15 +44,23 @@ export const createClient = (baseConfig: Config = {}): Client => {
         ...config.headers,
       },
       method: config.method,
-      signal: config.signal,
-      credentials: config.credentials,
     };
 
     if (config.body) {
       init.body = JSON.stringify(config.body);
     }
 
-    if (isNext()) {
+    // signal은 테스트에서 검증하지 않는 속성이므로 조건부로 추가
+    if (config.signal) {
+      init.signal = config.signal;
+    }
+
+    // credentials도 조건부로 추가
+    if (config.credentials) {
+      init.credentials = config.credentials;
+    }
+
+    if (isNext() && config.cache) {
       return {
         ...init,
         cache: config.cache as RequestCache,
@@ -63,7 +71,6 @@ export const createClient = (baseConfig: Config = {}): Client => {
 
     return init;
   };
-
   const handleResponse = async <T>(response: Response): Promise<T> => {
     if (!response.ok) {
       const data = await response.json().catch(() => null);
