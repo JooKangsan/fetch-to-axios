@@ -1,7 +1,7 @@
 // src/core/createClient.ts
 import { isNext } from "./utils/environment";
 import { retry } from "./utils/retry";
-import type { Config, Client, APIResponse, Interceptor } from "./types";
+import type { Config, Client, APIResponse, Interceptor, NextFetchConfig } from "./types";
 import { APIError } from "./types";
 
 export const createClient = (baseConfig: Config = {}): Client => {
@@ -36,6 +36,7 @@ export const createClient = (baseConfig: Config = {}): Client => {
 
     return url.toString();
   };
+
   const createRequestInit = (config: Config = {}): RequestInit => {
     const init: RequestInit = {
       headers: {
@@ -60,12 +61,16 @@ export const createClient = (baseConfig: Config = {}): Client => {
       init.credentials = config.credentials;
     }
 
-    if (isNext() && config.cache) {
+    if (isNext()) {
       return {
         ...init,
+        next: {
+          ...baseConfig.next, // 기본 설정
+          ...config.next, // 요청별 설정
+        },
         cache: config.cache as RequestCache,
       } as RequestInit & {
-        next?: { revalidate?: number | false; tags?: string[] };
+        next?: NextFetchConfig;
       };
     }
 

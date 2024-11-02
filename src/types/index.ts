@@ -1,6 +1,12 @@
 // src/types/index.ts
 type HTTPMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
+interface NextFetchConfig {
+  revalidate?: number | false;
+  tags?: string[];
+  cache?: "force-cache" | "no-store";
+}
+
 interface NextOptions {
   revalidate?: number | false;
   tags?: string[];
@@ -43,6 +49,7 @@ interface ReactConfig extends RequestOptions {
 type Config = (NextConfig | ReactConfig) & {
   retryConfig?: RetryConfig;
   credentials?: "same-origin" | "include" | "omit";
+  next?: NextFetchConfig;
 };
 
 // API 응답
@@ -85,6 +92,7 @@ interface Client {
 }
 
 export type {
+  NextFetchConfig,
   HTTPMethod,
   BaseConfig,
   RequestOptions,
