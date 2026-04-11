@@ -1,11 +1,10 @@
-// src/types/index.ts
 type HTTPMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 interface NextOptions {
   revalidate?: number | false;
   tags?: string[];
 }
-// 기본 설정
+
 interface BaseConfig {
   baseURL?: string;
   headers?: Record<string, string>;
@@ -13,71 +12,59 @@ interface BaseConfig {
   next?: NextOptions;
 }
 
-// 요청 옵션
 interface RequestOptions extends BaseConfig {
   url?: string;
   method?: HTTPMethod;
-  params?: Record<string, any>;
-  body?: any;
+  params?: Record<string, unknown>; // any → unknown으로 변경. 이유: any는 타입 체크 무력화
+  body?: unknown;
   signal?: AbortSignal;
+  credentials?: "same-origin" | "include" | "omit";
 }
 
-// 재시도 설정
 interface RetryConfig {
   maxRetries: number;
   retryDelay: number;
-  retryCondition?: (error: any) => boolean;
+  retryCondition?: (error: unknown) => boolean;
 }
 
-// Next.js 설정
-interface NextConfig extends RequestOptions {
+// NextConfig / ReactConfig 통합
+// 이유: 둘을 유니온으로 쓰면 타입 좁히기가 복잡해짐. cache 하나로 통일
+type Config = RequestOptions & {
   cache?: RequestCache;
-}
-
-// React 설정
-interface ReactConfig extends RequestOptions {
-  cache?: boolean;
-}
-
-// 통합 Config 타입
-type Config = (NextConfig | ReactConfig) & {
   retryConfig?: RetryConfig;
-  credentials?: "same-origin" | "include" | "omit";
+  responseType?: "json" | "blob" | "text" | "stream"; // 응답 타입 추가
 };
 
-// API 응답
 interface APIResponse<T = unknown> {
   data: T;
   status: number;
   headers: Headers;
 }
 
-// API 에러
-class APIError extends Error {
+// code → message로 변경
+// 이유: Error 클래스 기본 필드가 message라 일관성 있음. code는 별도 필드로 분리
+export class APIError extends Error {
   constructor(
-    public status: number,
-    public data: any,
-    public code: string = "API_ERROR"
+    public readonly status: number,
+    public readonly data: unknown = null,
+    message: string,
   ) {
-    super(`API Error: ${status}`);
+    super(message);
     this.name = "APIError";
   }
 }
 
-// 인터셉터
 interface Interceptor<T> {
   onFulfilled?: (value: T) => T | Promise<T>;
-  onRejected?: (error: any) => any;
+  onRejected?: (error: unknown) => unknown;
 }
 
-// 클라이언트 인터페이스
 interface Client {
-  get<T = any>(url: string, config?: Config): Promise<T>;
-  post<T = any>(url: string, data?: any, config?: Config): Promise<T>;
-  put<T = any>(url: string, data?: any, config?: Config): Promise<T>;
-  patch<T = any>(url: string, data?: any, config?: Config): Promise<T>;
-  delete<T = any>(url: string, config?: Config): Promise<T>;
-
+  get<T = unknown>(url: string, config?: Config): Promise<T>;
+  post<T = unknown>(url: string, data?: unknown, config?: Config): Promise<T>;
+  put<T = unknown>(url: string, data?: unknown, config?: Config): Promise<T>;
+  patch<T = unknown>(url: string, data?: unknown, config?: Config): Promise<T>;
+  delete<T = unknown>(url: string, config?: Config): Promise<T>;
   interceptors: {
     request: Interceptor<Config>[];
     response: Interceptor<APIResponse>[];
@@ -89,12 +76,8 @@ export type {
   BaseConfig,
   RequestOptions,
   RetryConfig,
-  NextConfig,
-  ReactConfig,
   Config,
   APIResponse,
   Interceptor,
   Client,
 };
-
-export { APIError };

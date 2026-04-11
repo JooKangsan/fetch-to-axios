@@ -1,4 +1,3 @@
-// src/core/createClient.ts
 import { isNext } from "./utils/environment";
 import { retry } from "./utils/retry";
 import type { Config, Client, APIResponse, Interceptor } from "./types";
@@ -8,83 +7,95 @@ export const createClient = (baseConfig: Config = {}): Client => {
   const requestInterceptors: Interceptor<Config>[] = [];
   const responseInterceptors: Interceptor<APIResponse>[] = [];
 
-  const createURL = (path: string, params?: Record<string, string>): string => {
-    if (!baseConfig.baseURL) {
-      return path;
-    }
-
-    // baseURL의 끝 슬래시 제거
-    const baseUrl = baseConfig.baseURL.replace(/\/+$/, "");
-
-    // path의 시작 슬래시 정규화 (여러 개의 슬래시를 하나로)
+  const createURL = (
+    path: string,
+    params?: Record<string, unknown>,
+  ): string => {
+    const baseUrl = baseConfig.baseURL?.replace(/\/+$/, "") ?? "";
     const normalizedPath = path.replace(/^\/+/, "/");
-
-    // URL 결합
     const fullUrl = `${baseUrl}${normalizedPath}`;
 
-    // 쿼리 파라미터 처리
-    if (!params) {
-      return fullUrl;
-    }
+    if (!params) return fullUrl;
 
     const url = new URL(fullUrl);
     Object.entries(params).forEach(([key, value]) => {
-      if (value != null) {
-        url.searchParams.append(key, value);
-      }
+      if (value != null) url.searchParams.append(key, String(value));
     });
-
     return url.toString();
   };
-  const createRequestInit = (config: Config = {}): RequestInit => {
-    const init: RequestInit = {
-      headers: {
-        "Content-Type": "application/json",
-        ...baseConfig.headers,
-        ...config.headers,
-      },
+
+  const createRequestInit = (config: Config): RequestInit => {
+    const isFormData = config.body instanceof FormData;
+    const baseHeaders = { ...baseConfig.headers, ...config.headers };
+
+    // FormData일 때 Content-Type 제거
+    // 이유: Content-Type 직접 설정하면 boundary 값이 없어서 서버가 파싱 못함
+    const headers = isFormData
+      ? Object.fromEntries(
+          Object.entries(baseHeaders).filter(
+            ([key]) => key.toLowerCase() !== "content-type",
+          ),
+        )
+      : { "Content-Type": "application/json", ...baseHeaders };
+
+    return {
       method: config.method,
+      headers,
+      ...(config.body
+        ? {
+            body: isFormData
+              ? (config.body as FormData)
+              : JSON.stringify(config.body),
+          }
+        : {}),
+      ...(config.signal ? { signal: config.signal } : {}),
+      ...(config.credentials ? { credentials: config.credentials } : {}),
+      ...(isNext && config.cache ? { cache: config.cache } : {}),
+      ...(isNext && config.next ? { next: config.next } : {}),
     };
-
-    if (config.body) {
-      init.body = JSON.stringify(config.body);
-    }
-
-    // signal은 테스트에서 검증하지 않는 속성이므로 조건부로 추가
-    if (config.signal) {
-      init.signal = config.signal;
-    }
-
-    // credentials도 조건부로 추가
-    if (config.credentials) {
-      init.credentials = config.credentials;
-    }
-
-    if (isNext() && config.cache) {
-      return {
-        ...init,
-        cache: config.cache as RequestCache,
-      } as RequestInit & {
-        next?: { revalidate?: number | false; tags?: string[] };
-      };
-    }
-
-    return init;
   };
-  const handleResponse = async <T>(response: Response): Promise<T> => {
+
+  const parseResponse = async <T>(
+    response: Response,
+    responseType?: Config["responseType"],
+  ): Promise<T> => {
+    switch (responseType) {
+      case "blob":
+        return response.blob() as Promise<T>;
+      case "text":
+        return response.text() as Promise<T>;
+      case "stream":
+        return Promise.resolve(response.body) as Promise<T>;
+      default:
+        return response.json() as Promise<T>;
+    }
+  };
+
+  const handleResponse = async <T>(
+    response: Response,
+    responseType?: Config["responseType"],
+  ): Promise<T> => {
     if (!response.ok) {
-      const data = await response.json().catch(() => null);
+      let errorData = null;
+      try {
+        errorData = await response.json();
+      } catch {
+        // blob, text 요청이어도 에러 응답은 보통 JSON으로 내려옴
+      }
       throw new APIError(
         response.status,
-        data,
-        response.status === 429 ? "RATE_LIMIT" : "API_ERROR"
+        errorData,
+        errorData?.message ?? `Error ${response.status}`,
       );
     }
 
-    const data = await response.json();
+    const data = await parseResponse<T>(response, responseType);
 
-    // 응답 인터셉터 실행
-    const apiResponse: APIResponse = {
+    // 인터셉터 없으면 reduce 스킵
+    // 이유: 인터셉터 없어도 Promise.resolve 만들고 순회하던 기존 코드 개선
+    if (responseInterceptors.length === 0) return data;
+
+    const apiResponse: APIResponse<T> = {
       data,
       status: response.status,
       headers: response.headers,
@@ -95,36 +106,43 @@ export const createClient = (baseConfig: Config = {}): Client => {
         const value = await promise;
         return interceptor.onFulfilled ? interceptor.onFulfilled(value) : value;
       },
-      Promise.resolve(apiResponse)
+      Promise.resolve(apiResponse as APIResponse),
     );
 
     return result.data as T;
   };
 
   const request = async <T>(config: Config): Promise<T> => {
-    // 요청 인터셉터 실행
-    const finalConfig = await requestInterceptors.reduce(
-      async (promise, interceptor) => {
-        const conf = await promise;
-        return interceptor.onFulfilled ? interceptor.onFulfilled(conf) : conf;
-      },
-      Promise.resolve(config)
-    );
+    // 인터셉터 없으면 스킵
+    const finalConfig =
+      requestInterceptors.length === 0
+        ? config
+        : await requestInterceptors.reduce(async (promise, interceptor) => {
+            const conf = await promise;
+            return interceptor.onFulfilled
+              ? interceptor.onFulfilled(conf)
+              : conf;
+          }, Promise.resolve(config));
 
-    const controller = new AbortController();
+    // timeout 있을 때만 AbortController 생성
+    // 이유: 기존 코드는 항상 생성했음. 불필요한 객체 생성 제거
+    const controller = finalConfig.timeout ? new AbortController() : null;
     const timeoutId =
-      finalConfig.timeout &&
-      setTimeout(() => controller.abort(), finalConfig.timeout);
+      controller && finalConfig.timeout
+        ? setTimeout(() => controller.abort(), finalConfig.timeout)
+        : null;
 
     try {
       const url = createURL(config.url!, config.params);
       const init = createRequestInit({
         ...finalConfig,
-        signal: controller.signal,
+        signal: config.signal ?? controller?.signal,
       });
 
       const execute = () =>
-        fetch(url, init).then((res) => handleResponse<T>(res));
+        fetch(url, init).then((res) =>
+          handleResponse<T>(res, finalConfig.responseType),
+        );
 
       if (finalConfig.retryConfig) {
         const { maxRetries, retryDelay, retryCondition } =
@@ -143,25 +161,15 @@ export const createClient = (baseConfig: Config = {}): Client => {
       request: requestInterceptors,
       response: responseInterceptors,
     },
-
-    async get<T>(url: string, config: Config = {}) {
-      return request<T>({ ...config, url, method: "GET" });
-    },
-
-    async post<T>(url: string, data?: any, config: Config = {}) {
-      return request<T>({ ...config, url, method: "POST", body: data });
-    },
-
-    async put<T>(url: string, data?: any, config: Config = {}) {
-      return request<T>({ ...config, url, method: "PUT", body: data });
-    },
-
-    async patch<T>(url: string, data?: any, config: Config = {}) {
-      return request<T>({ ...config, url, method: "PATCH", body: data });
-    },
-
-    async delete<T>(url: string, config: Config = {}) {
-      return request<T>({ ...config, url, method: "DELETE" });
-    },
+    get: <T>(url: string, config: Config = {}) =>
+      request<T>({ ...config, url, method: "GET" }),
+    post: <T>(url: string, data?: unknown, config: Config = {}) =>
+      request<T>({ ...config, url, method: "POST", body: data }),
+    put: <T>(url: string, data?: unknown, config: Config = {}) =>
+      request<T>({ ...config, url, method: "PUT", body: data }),
+    patch: <T>(url: string, data?: unknown, config: Config = {}) =>
+      request<T>({ ...config, url, method: "PATCH", body: data }),
+    delete: <T>(url: string, config: Config = {}) =>
+      request<T>({ ...config, url, method: "DELETE" }),
   };
 };
